@@ -199,7 +199,6 @@ canvas{max-width:100%;box-shadow:0 4px 20px rgba(0,0,0,0.4);border-radius:4px}
 <button id="nextBtn" onclick="changePage(1)">▶</button>
 <button onclick="zoomChange(-0.2)">ー</button>
 <button onclick="zoomChange(0.2)">＋</button>
-<button onclick="location.href='./${pdfFileName}'">DL</button>
 </div>
 <div class="viewer" id="viewer"><div class="loading">読み込み中...</div></div>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"><\/script>
