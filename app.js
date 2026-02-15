@@ -180,6 +180,33 @@ function generateRedirectHtml(targetUrl, slug) {
   return `<!DOCTYPE html><html lang="ja"><head><meta charset="UTF-8"><meta http-equiv="refresh" content="0;url=${targetUrl}"><title>リダイレクト中...</title><style>body{background:#1a1a2e;color:#e8e8f0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}a{color:#a855f7}</style></head><body><p>リダイレクト中... <a href="${targetUrl}">こちらをクリック</a></p><script>window.location.href="${targetUrl}"<\/script></body></html>`;
 }
 
+// ===== URL Check =====
+async function checkUrlAvailability(url, progressText, progressFill) {
+  const maxRetries = 60; // 5秒 * 60 = 5分
+  let retries = 0;
+
+  progressText.textContent = 'URLの有効化を待機中... (これには数分かかる場合があります)';
+  progressFill.style.width = '80%';
+  progressFill.className = 'progress-fill pulse';
+
+  while (retries < maxRetries) {
+    try {
+      const res = await fetch(`${url}?t=${Date.now()}`, { method: 'HEAD', cache: 'no-cache' });
+      if (res.ok) {
+        progressFill.className = 'progress-fill';
+        return true;
+      }
+    } catch (e) {
+      console.log('Waiting for URL...', e);
+    }
+    await new Promise(r => setTimeout(r, 5000));
+    retries++;
+  }
+
+  progressFill.className = 'progress-fill';
+  return false;
+}
+
 // ===== PDF Submit =====
 $('#pdfSubmit').addEventListener('click', async () => {
   const slug = $('#pdfSlug').value.trim().replace(/[^a-zA-Z0-9_-]/g, '');
@@ -198,6 +225,7 @@ $('#pdfSubmit').addEventListener('click', async () => {
   btn.disabled = true;
   progress.classList.add('show');
 
+  let isAvailable = false;
   try {
     // Step 1: Convert file to base64
     progressText.textContent = 'PDFを準備中...';
@@ -215,7 +243,7 @@ $('#pdfSubmit').addEventListener('click', async () => {
 
     // Step 3: Generate and upload viewer HTML
     progressText.textContent = 'ビューアHTMLを作成・送信中...';
-    progressFill.style.width = '70%';
+    progressFill.style.width = '60%';
     const viewerHtml = generatePdfViewerHtml(pdfFileName, selectedFile.name.replace('.pdf', ''));
     const viewerBase64 = btoa(unescape(encodeURIComponent(viewerHtml)));
     await githubRequest(`${slug}/index.html`, 'PUT', {
@@ -223,16 +251,24 @@ $('#pdfSubmit').addEventListener('click', async () => {
       content: viewerBase64
     });
 
-    // Step 4: Done
-    progressFill.style.width = '100%';
-    progressText.textContent = '完了！';
-
+    // Step 4: Wait for URL
     const publicUrl = `https://${settings.username}.github.io/${settings.repo}/${slug}/`;
-    $('#pdfResultUrl').value = publicUrl;
-    $('#pdfResult').classList.add('show');
+    isAvailable = await checkUrlAvailability(publicUrl, progressText, progressFill);
 
-    addToHistory('pdf', slug, publicUrl);
-    showToast('オリジナルURLを作成しました！', 'success');
+    if (isAvailable) {
+      progressFill.style.width = '100%';
+      progressText.textContent = '完了！アクセス可能です';
+      $('#pdfResultUrl').value = publicUrl;
+      $('#pdfResult').classList.add('show');
+      addToHistory('pdf', slug, publicUrl);
+      showToast('オリジナルURLを作成しました！', 'success');
+    } else {
+      progressText.textContent = 'アップロード完了（反映待ち）';
+      $('#pdfResultUrl').value = publicUrl;
+      $('#pdfResult').classList.add('show');
+      addToHistory('pdf', slug, publicUrl);
+      showToast('反映に時間がかかっていますが、URLは生成されました', 'warning');
+    }
 
   } catch (err) {
     showToast(`エラー: ${err.message}`, 'error');
@@ -242,7 +278,7 @@ $('#pdfSubmit').addEventListener('click', async () => {
       progressFill.style.width = '0%';
       btn.disabled = false;
       validatePdfForm();
-    }, 1500);
+    }, isAvailable ? 1500 : 5000);
   }
 });
 
@@ -265,6 +301,7 @@ $('#urlSubmit').addEventListener('click', async () => {
   btn.disabled = true;
   progress.classList.add('show');
 
+  let isAvailable = false;
   try {
     // Step 1: Generate redirect HTML
     progressText.textContent = 'リダイレクト設定を作成中...';
@@ -280,16 +317,24 @@ $('#urlSubmit').addEventListener('click', async () => {
       content: base64
     });
 
-    // Step 3: Done
-    progressFill.style.width = '100%';
-    progressText.textContent = '完了！';
-
+    // Step 3: Wait for URL
     const publicUrl = `https://${settings.username}.github.io/${settings.repo}/${slug}/`;
-    $('#urlResultUrl').value = publicUrl;
-    $('#urlResult').classList.add('show');
+    isAvailable = await checkUrlAvailability(publicUrl, progressText, progressFill);
 
-    addToHistory('url', slug, publicUrl);
-    showToast('オリジナルURLを作成しました！', 'success');
+    if (isAvailable) {
+      progressFill.style.width = '100%';
+      progressText.textContent = '完了！アクセス可能です';
+      $('#urlResultUrl').value = publicUrl;
+      $('#urlResult').classList.add('show');
+      addToHistory('url', slug, publicUrl);
+      showToast('オリジナルURLを作成しました！', 'success');
+    } else {
+      progressText.textContent = 'アップロード完了（反映待ち）';
+      $('#urlResultUrl').value = publicUrl;
+      $('#urlResult').classList.add('show');
+      addToHistory('url', slug, publicUrl);
+      showToast('反映に時間がかかっていますが、URLは生成されました', 'warning');
+    }
 
   } catch (err) {
     showToast(`エラー: ${err.message}`, 'error');
@@ -299,9 +344,10 @@ $('#urlSubmit').addEventListener('click', async () => {
       progressFill.style.width = '0%';
       btn.disabled = false;
       validateUrlForm();
-    }, 1500);
+    }, isAvailable ? 1500 : 5000);
   }
 });
+
 
 // ===== Copy Buttons =====
 $('#pdfCopyBtn').addEventListener('click', () => {
