@@ -754,6 +754,23 @@ body::before {
   color: var(--accent-2);
 }
 
+.history-item .history-delete {
+  background: none;
+  border: none;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 0.9rem;
+  padding: 4px 8px;
+  border-radius: 6px;
+  transition: var(--transition);
+  margin-left: 4px;
+}
+
+.history-item .history-delete:hover {
+  background: rgba(239, 68, 68, 0.1);
+  color: var(--error);
+}
+
 .history-empty {
   text-align: center;
   padding: 32px;

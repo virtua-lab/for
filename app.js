@@ -339,6 +339,7 @@ function renderHistory() {
       <span class="history-slug">${item.slug}</span>
       <span class="history-date">${item.date}</span>
       <button class="history-copy" onclick="copyHistoryUrl('${item.url}')" title="URLをコピー">📋</button>
+      <button class="history-delete" onclick="deleteHistoryItem('${item.slug}', '${item.type}')" title="GitHubから削除">🗑️</button>
     </div>
   `).join('');
 }
@@ -346,6 +347,63 @@ function renderHistory() {
 window.copyHistoryUrl = function (url) {
   navigator.clipboard.writeText(url);
   showToast('URLをコピーしました', 'success');
+};
+
+async function deleteFromGithub(path) {
+  const settings = getSettings();
+  const url = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${path}`;
+  const headers = {
+    'Authorization': `token ${settings.token}`,
+    'Accept': 'application/vnd.github.v3+json'
+  };
+
+  let sha;
+  try {
+    const res = await fetch(url, { headers });
+    if (!res.ok) return;
+    const data = await res.json();
+    sha = data.sha;
+  } catch (e) { return; }
+
+  const res = await fetch(url, {
+    method: 'DELETE',
+    headers: { ...headers, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      message: `Delete ${path}`,
+      sha: sha
+    })
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || 'Delete failed');
+  }
+}
+
+window.deleteHistoryItem = async function (slug, type) {
+  if (!confirm(`「${slug}」をGitHubから削除しますか？\nこの操作は取り消せません。`)) return;
+
+  try {
+    showToast('GitHubからデータ削除中...', 'info');
+
+    // Delete index.html
+    await deleteFromGithub(`${slug}/index.html`);
+
+    // If PDF, delete file.pdf
+    if (type === 'pdf') {
+      await deleteFromGithub(`${slug}/file.pdf`);
+    }
+
+    // Remove from local history
+    history = history.filter(h => h.slug !== slug);
+    localStorage.setItem('urlconv_history', JSON.stringify(history));
+    renderHistory();
+
+    showToast('削除しました', 'success');
+
+  } catch (e) {
+    showToast(`削除エラー: ${e.message}`, 'error');
+  }
 };
 
 // ===== Settings Modal =====
