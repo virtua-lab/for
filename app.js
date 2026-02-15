@@ -19,11 +19,8 @@ document.addEventListener('DOMContentLoaded', () => {
   loadHistory();
   validateConnection();
 
-  // 初期設定が未完了なら自動でモーダルを開く
-  const s = getSettings();
-  if (!s.token || !s.username || !s.repo) {
-    openSettingsModal();
-  }
+  loadHistory();
+  validateConnection();
 });
 
 // === Settings Management ===
@@ -107,26 +104,50 @@ async function validateConnection() {
   if (!s.token || !s.username || !s.repo) {
     statusEl.classList.remove('connected');
     textEl.textContent = '未接続';
-    return;
+    return false;
   }
 
   try {
+    // ユーザー情報の取得（トークンのスコープ確認のためではなく、接続確認として）
     const res = await fetch(`https://api.github.com/repos/${s.username}/${s.repo}`, {
       headers: {
         'Authorization': `Bearer ${s.token}`,
         'Accept': 'application/vnd.github.v3+json',
       },
     });
+
     if (res.ok) {
-      statusEl.classList.add('connected');
-      textEl.textContent = '接続中';
+      const data = await res.json();
+
+      // 権限チェック: push（書き込み）権限があるか確認
+      if (data.permissions && (data.permissions.push || data.permissions.admin)) {
+        statusEl.classList.add('connected');
+        textEl.textContent = '接続OK';
+        return true;
+      } else {
+        statusEl.classList.remove('connected');
+        textEl.textContent = '権限不足';
+        showStatus('接続できましたが、書き込み権限がありません。トークンの「repo」スコープを確認してください。', 'error');
+        return false;
+      }
     } else {
       statusEl.classList.remove('connected');
-      textEl.textContent = 'エラー';
+      if (res.status === 404) {
+        textEl.textContent = 'リポジトリ不明';
+        showStatus('リポジトリが見つかりません。ユーザー名とリポジトリ名を確認してください。', 'error');
+      } else if (res.status === 401) {
+        textEl.textContent = '認証エラー';
+        showStatus('トークンが無効です。再度入力してください。', 'error');
+      } else {
+        textEl.textContent = `エラー: ${res.status}`;
+      }
+      return false;
     }
-  } catch {
+  } catch (e) {
     statusEl.classList.remove('connected');
-    textEl.textContent = '未接続';
+    textEl.textContent = '通信エラー';
+    console.error(e);
+    return false;
   }
 }
 
@@ -277,7 +298,10 @@ async function githubApi(endpoint, options = {}) {
   const res = await fetch(url, { ...options, headers });
   if (!res.ok) {
     const errBody = await res.json().catch(() => ({}));
-    throw new Error(errBody.message || `GitHub API Error: ${res.status}`);
+    const msg = errBody.message || res.statusText;
+    if (res.status === 404) throw new Error('Not Found');
+    if (res.status === 401) throw new Error('認証失敗: トークンが無効です');
+    throw new Error(`GitHub API Error: ${res.status} ${msg}`);
   }
   // 204 No Content
   if (res.status === 204) return null;
@@ -292,7 +316,18 @@ async function fetchDatabase() {
     const content = JSON.parse(atob(data.content.replace(/\n/g, '')));
     return { content, sha: data.sha };
   } catch (e) {
-    if (e.message.includes('Not Found') || e.message.includes('404')) {
+    if (e.message === 'Not Found') {
+      // ファイルが無い場合、リポジトリ自体の存在確認
+      const repoCheck = await fetch(`https://api.github.com/repos/${s.username}/${s.repo}`, {
+        headers: { 'Authorization': `Bearer ${s.token}` }
+      });
+
+      if (!repoCheck.ok) {
+        if (repoCheck.status === 404) throw new Error('リポジトリが見つかりません。設定を確認してください。');
+        if (repoCheck.status === 401) throw new Error('トークンが無効です。');
+      }
+
+      // リポジトリはあるがファイルが無い＝初回利用
       return { content: {}, sha: null };
     }
     throw e;
@@ -369,10 +404,7 @@ async function handleSubmit() {
 
   // Validate settings
   const s = getSettings();
-  if (!s.token || !s.username || !s.repo) {
-    showStatus('GitHub設定を入力してください。', 'error');
-    return;
-  }
+  const hasAuth = s.token && s.username && s.repo;
 
   // Validate input
   if (state.mode === 'url') {
@@ -387,9 +419,38 @@ async function handleSubmit() {
       showStatus('有効なURLを入力してください。', 'error');
       return;
     }
+
+    // トークンがない場合の「手動モード」
+    if (!hasAuth) {
+      // Get slug
+      let slug = document.getElementById('custom-slug').value.trim();
+      if (!slug) {
+        generateRandomSlug();
+        slug = document.getElementById('custom-slug').value;
+      }
+
+      const jsonEntry = `"${slug}": {\n  "target": "${url}",\n  "type": "url",\n  "created": "${new Date().toISOString()}"\n},`;
+
+      const manualMsg = `トークン未設定のため自動保存できません。\n以下のデータを database.json に手動で追記してください：\n\n${jsonEntry}`;
+
+      // クリップボードにコピー
+      navigator.clipboard.writeText(jsonEntry).then(() => {
+        alert(manualMsg + "\n\n(クリップボードにコピーしました)");
+      }).catch(() => {
+        alert(manualMsg);
+      });
+      return;
+    }
+
   } else {
+    // PDFモード
     if (!state.selectedFile) {
       showStatus('PDFファイルを選択してください。', 'error');
+      return;
+    }
+    if (!hasAuth) {
+      alert('PDFアップロードにはトークン設定が必須です。設定画面からトークンを入力してください。');
+      openSettingsModal();
       return;
     }
   }
