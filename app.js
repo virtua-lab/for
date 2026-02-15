@@ -1,612 +1,524 @@
-/* ============================================
-   オリジナルURL作成ツール - Application Logic
-   Pure vanilla JS, no dependencies required
-   ============================================ */
+// ===== State =====
+let selectedFile = null;
+let history = JSON.parse(localStorage.getItem('urlconv_history') || '[]');
 
-// === State ===
-const state = {
-  mode: 'url',       // 'url' or 'pdf'
-  selectedFile: null, // File object for PDF
-  isLoading: false,
-};
+// ===== DOM Elements =====
+const $ = (sel) => document.querySelector(sel);
+const $$ = (sel) => document.querySelectorAll(sel);
 
-// === Initialization ===
-document.addEventListener('DOMContentLoaded', () => {
-  loadSettings();
-  setupDropZone();
-  setupFileInput();
-  updateSlugPrefix();
-  loadHistory();
-  validateConnection();
-
-  loadHistory();
-  validateConnection();
-});
-
-// === Settings Management ===
-function loadSettings() {
-  const fields = ['github-token', 'github-username', 'github-repo', 'custom-domain'];
-  fields.forEach(id => {
-    const value = localStorage.getItem(`urlshort_${id}`);
-    if (value) document.getElementById(id).value = value;
-  });
-}
-
-function saveSettings() {
-  const fields = ['github-token', 'github-username', 'github-repo', 'custom-domain'];
-  fields.forEach(id => {
-    const el = document.getElementById(id);
-    if (el) localStorage.setItem(`urlshort_${id}`, el.value.trim());
-  });
-}
-
-// Auto-save on input (モーダル内のフィールド)
-['github-token', 'github-username', 'github-repo', 'custom-domain'].forEach(id => {
-  document.getElementById(id)?.addEventListener('input', () => {
-    saveSettings();
-    updateSlugPrefix();
-  });
-});
-
-// === Settings Modal ===
-function openSettingsModal() {
-  document.getElementById('settings-modal').classList.add('visible');
-}
-
-function closeSettingsModal(event) {
-  // event引数がある場合はオーバーレイクリック
-  if (event && event.target !== event.currentTarget) return;
-  document.getElementById('settings-modal').classList.remove('visible');
-}
-
-function saveAndClose() {
-  saveSettings();
-  validateConnection();
-  updateSlugPrefix();
-  loadHistory();
-  closeSettingsModal();
-  const s = getSettings();
-  if (s.token && s.username && s.repo) {
-    showStatus('GitHub設定を保存しました ✅', 'success');
-  }
-}
-
+// ===== Settings =====
 function getSettings() {
   return {
-    token: document.getElementById('github-token').value.trim(),
-    username: document.getElementById('github-username').value.trim(),
-    repo: document.getElementById('github-repo').value.trim(),
-    customDomain: document.getElementById('custom-domain').value.trim(),
+    username: localStorage.getItem('gh_username') || '',
+    repo: localStorage.getItem('gh_repo') || '',
+    token: localStorage.getItem('gh_token') || ''
   };
 }
 
-function getBaseUrl() {
+function saveSettingsToStorage(username, repo, token) {
+  localStorage.setItem('gh_username', username);
+  localStorage.setItem('gh_repo', repo);
+  localStorage.setItem('gh_token', token);
+}
+
+function isConfigured() {
   const s = getSettings();
-  if (s.customDomain) {
-    return `https://${s.customDomain}`;
-  }
-  return `https://${s.username}.github.io/${s.repo}`;
+  return s.username && s.repo && s.token;
 }
 
-function updateSlugPrefix() {
-  const prefix = document.getElementById('slug-prefix');
-  if (prefix) {
-    const baseUrl = getBaseUrl();
-    prefix.textContent = baseUrl.replace('https://', '') + '/';
-  }
+// ===== Toast =====
+function showToast(message, type = 'info') {
+  const container = $('#toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+  setTimeout(() => {
+    toast.style.transition = '0.3s ease';
+    toast.style.opacity = '0';
+    toast.style.transform = 'translateX(100%)';
+    setTimeout(() => toast.remove(), 300);
+  }, 3500);
 }
 
-async function validateConnection() {
-  const s = getSettings();
-  const statusEl = document.getElementById('connection-status');
-  const textEl = document.getElementById('connection-text');
+// ===== Tabs =====
+$$('.tab-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    $$('.tab-btn').forEach(b => b.classList.remove('active'));
+    $$('.tab-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    $(`#tab-${btn.dataset.tab}`).classList.add('active');
+  });
+});
 
-  if (!s.token || !s.username || !s.repo) {
-    statusEl.classList.remove('connected');
-    textEl.textContent = '未接続';
-    return false;
-  }
+// ===== Drop Zone =====
+const dropZone = $('#dropZone');
+const fileInput = $('#fileInput');
 
-  try {
-    // ユーザー情報の取得（トークンのスコープ確認のためではなく、接続確認として）
-    const res = await fetch(`https://api.github.com/repos/${s.username}/${s.repo}`, {
-      headers: {
-        'Authorization': `Bearer ${s.token}`,
-        'Accept': 'application/vnd.github.v3+json',
-      },
-    });
+dropZone.addEventListener('click', () => fileInput.click());
 
-    if (res.ok) {
-      const data = await res.json();
+dropZone.addEventListener('dragover', (e) => {
+  e.preventDefault();
+  dropZone.classList.add('dragover');
+});
 
-      // 権限チェック: push（書き込み）権限があるか確認
-      if (data.permissions && (data.permissions.push || data.permissions.admin)) {
-        statusEl.classList.add('connected');
-        textEl.textContent = '接続OK';
-        return true;
-      } else {
-        statusEl.classList.remove('connected');
-        textEl.textContent = '権限不足';
-        showStatus('接続できましたが、書き込み権限がありません。トークンの「repo」スコープを確認してください。', 'error');
-        return false;
-      }
-    } else {
-      statusEl.classList.remove('connected');
-      if (res.status === 404) {
-        textEl.textContent = 'リポジトリ不明';
-        showStatus('リポジトリが見つかりません。ユーザー名とリポジトリ名を確認してください。', 'error');
-      } else if (res.status === 401) {
-        textEl.textContent = '認証エラー';
-        showStatus('トークンが無効です。再度入力してください。', 'error');
-      } else {
-        textEl.textContent = `エラー: ${res.status}`;
-      }
-      return false;
-    }
-  } catch (e) {
-    statusEl.classList.remove('connected');
-    textEl.textContent = '通信エラー';
-    console.error(e);
-    return false;
-  }
-}
+dropZone.addEventListener('dragleave', () => {
+  dropZone.classList.remove('dragover');
+});
 
-// === Token Visibility Toggle ===
-function toggleTokenVisibility() {
-  const input = document.getElementById('github-token');
-  const btn = document.getElementById('token-toggle');
-  if (input.type === 'password') {
-    input.type = 'text';
-    btn.textContent = '🙈';
+dropZone.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('dragover');
+  const file = e.dataTransfer.files[0];
+  if (file && file.type === 'application/pdf') {
+    handleFileSelect(file);
   } else {
-    input.type = 'password';
-    btn.textContent = '👁️';
+    showToast('PDFファイルのみ対応しています', 'error');
   }
-}
+});
 
-// === Card Toggle ===
-function toggleCard(name) {
-  const body = document.getElementById(`${name}-body`);
-  const toggle = document.getElementById(`${name}-toggle`);
-  body.classList.toggle('collapsed');
-  toggle.classList.toggle('collapsed');
-}
-
-// === Mode Switching ===
-function setMode(mode) {
-  state.mode = mode;
-
-  document.getElementById('mode-url').classList.toggle('active', mode === 'url');
-  document.getElementById('mode-pdf').classList.toggle('active', mode === 'pdf');
-  document.getElementById('url-section').style.display = mode === 'url' ? 'block' : 'none';
-  document.getElementById('pdf-section').style.display = mode === 'pdf' ? 'block' : 'none';
-}
-
-// === URL Input ===
-function clearUrlInput() {
-  document.getElementById('target-url').value = '';
-}
-
-// === File Drop Zone ===
-function setupDropZone() {
-  const zone = document.getElementById('drop-zone');
-
-  zone.addEventListener('dragover', (e) => {
-    e.preventDefault();
-    zone.classList.add('drag-over');
-  });
-
-  zone.addEventListener('dragleave', () => {
-    zone.classList.remove('drag-over');
-  });
-
-  zone.addEventListener('drop', (e) => {
-    e.preventDefault();
-    zone.classList.remove('drag-over');
-    const files = e.dataTransfer.files;
-    if (files.length > 0 && files[0].type === 'application/pdf') {
-      selectFile(files[0]);
-    } else {
-      showStatus('PDFファイルのみアップロードできます。', 'error');
-    }
-  });
-}
-
-function setupFileInput() {
-  document.getElementById('file-input').addEventListener('change', (e) => {
-    if (e.target.files.length > 0) {
-      selectFile(e.target.files[0]);
-    }
-  });
-}
-
-function selectFile(file) {
-  if (file.size > 25 * 1024 * 1024) {
-    showStatus('ファイルサイズが25MBを超えています。', 'error');
-    return;
+fileInput.addEventListener('change', (e) => {
+  if (e.target.files[0]) {
+    handleFileSelect(e.target.files[0]);
   }
+});
 
-  state.selectedFile = file;
-  document.getElementById('drop-zone').style.display = 'none';
-  document.getElementById('file-info-zone').style.display = 'block';
-  document.getElementById('file-name').textContent = file.name;
-  document.getElementById('file-size').textContent = formatFileSize(file.size);
+function handleFileSelect(file) {
+  selectedFile = file;
+  $('#fileName').textContent = file.name;
+  $('#fileSize').textContent = formatSize(file.size);
+  $('#fileInfo').classList.add('show');
+  validatePdfForm();
 }
 
-function removeFile() {
-  state.selectedFile = null;
-  document.getElementById('drop-zone').style.display = 'block';
-  document.getElementById('file-info-zone').style.display = 'none';
-  document.getElementById('file-input').value = '';
+$('#removeFile').addEventListener('click', () => {
+  selectedFile = null;
+  fileInput.value = '';
+  $('#fileInfo').classList.remove('show');
+  validatePdfForm();
+});
+
+function formatSize(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1048576) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / 1048576).toFixed(1) + ' MB';
 }
 
-function formatFileSize(bytes) {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+// ===== Form Validation =====
+function validatePdfForm() {
+  const slug = $('#pdfSlug').value.trim();
+  $('#pdfSubmit').disabled = !(slug && selectedFile && isConfigured());
 }
 
-// === Slug Management ===
-function validateSlug(input) {
-  const clean = input.value.replace(/[^a-zA-Z0-9_-]/g, '');
-  if (input.value !== clean) {
-    input.value = clean;
-  }
+function validateUrlForm() {
+  const slug = $('#urlSlug').value.trim();
+  const url = $('#targetUrl').value.trim();
+  $('#urlSubmit').disabled = !(slug && url && isConfigured());
 }
 
-function generateRandomSlug() {
-  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
-  let slug = '';
-  for (let i = 0; i < 6; i++) {
-    slug += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  document.getElementById('custom-slug').value = slug;
-}
+$('#pdfSlug').addEventListener('input', validatePdfForm);
+$('#urlSlug').addEventListener('input', validateUrlForm);
+$('#targetUrl').addEventListener('input', validateUrlForm);
 
-// === Status Messages ===
-function showStatus(message, type = 'info') {
-  const el = document.getElementById('status-message');
-  const icon = document.getElementById('status-icon');
-  const text = document.getElementById('status-text');
+// ===== GitHub API =====
+async function githubRequest(path, method, body) {
+  const settings = getSettings();
+  const url = `https://api.github.com/repos/${settings.username}/${settings.repo}/contents/${path}`;
 
-  el.className = `status-message visible ${type}`;
-  icon.textContent = type === 'error' ? '❌' : type === 'success' ? '✅' : 'ℹ️';
-  text.textContent = message;
-
-  if (type !== 'error') {
-    setTimeout(() => {
-      el.classList.remove('visible');
-    }, 5000);
-  }
-}
-
-function clearStatus() {
-  document.getElementById('status-message').classList.remove('visible');
-}
-
-// === GitHub API Helpers ===
-async function githubApi(endpoint, options = {}) {
-  const s = getSettings();
-  const url = `https://api.github.com${endpoint}`;
   const headers = {
-    'Authorization': `Bearer ${s.token}`,
-    'Accept': 'application/vnd.github.v3+json',
+    'Authorization': `token ${settings.token}`,
     'Content-Type': 'application/json',
-    ...options.headers,
+    'Accept': 'application/vnd.github.v3+json'
   };
 
-  const res = await fetch(url, { ...options, headers });
-  if (!res.ok) {
-    const errBody = await res.json().catch(() => ({}));
-    const msg = errBody.message || res.statusText;
-    if (res.status === 404) throw new Error('Not Found');
-    if (res.status === 401) throw new Error('認証失敗: トークンが無効です');
-    throw new Error(`GitHub API Error: ${res.status} ${msg}`);
+  // Check if file already exists (for update, to get sha)
+  let sha = null;
+  if (method === 'PUT') {
+    try {
+      const checkRes = await fetch(url, { headers });
+      if (checkRes.ok) {
+        const checkData = await checkRes.json();
+        sha = checkData.sha;
+      }
+    } catch (e) {
+      // File doesn't exist yet, that's fine
+    }
   }
-  // 204 No Content
-  if (res.status === 204) return null;
+
+  const payload = { ...body };
+  if (sha) payload.sha = sha;
+
+  const res = await fetch(url, { method, headers, body: JSON.stringify(payload) });
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.message || `GitHub API エラー (${res.status})`);
+  }
   return res.json();
 }
 
-// Fetch database.json (with SHA for updates)
-async function fetchDatabase() {
-  const s = getSettings();
-  try {
-    const data = await githubApi(`/repos/${s.username}/${s.repo}/contents/database.json`);
-    const content = JSON.parse(atob(data.content.replace(/\n/g, '')));
-    return { content, sha: data.sha };
-  } catch (e) {
-    if (e.message === 'Not Found') {
-      // ファイルが無い場合、リポジトリ自体の存在確認
-      const repoCheck = await fetch(`https://api.github.com/repos/${s.username}/${s.repo}`, {
-        headers: { 'Authorization': `Bearer ${s.token}` }
-      });
-
-      if (!repoCheck.ok) {
-        if (repoCheck.status === 404) throw new Error('リポジトリが見つかりません。設定を確認してください。');
-        if (repoCheck.status === 401) throw new Error('トークンが無効です。');
-      }
-
-      // リポジトリはあるがファイルが無い＝初回利用
-      return { content: {}, sha: null };
-    }
-    throw e;
-  }
-}
-
-// Update database.json
-async function updateDatabase(newContent, sha) {
-  const s = getSettings();
-  const encoded = btoa(unescape(encodeURIComponent(JSON.stringify(newContent, null, 2))));
-  const body = {
-    message: `🔗 スラッグ追加: オリジナルURL作成`,
-
-    content: encoded,
-  };
-  if (sha) body.sha = sha;
-
-  return githubApi(`/repos/${s.username}/${s.repo}/contents/database.json`, {
-    method: 'PUT',
-    body: JSON.stringify(body),
-  });
-}
-
-// Upload PDF to GitHub
-async function uploadPdf(file, slug) {
-  const s = getSettings();
-  const reader = new FileReader();
-
+function fileToBase64(file) {
   return new Promise((resolve, reject) => {
-    reader.onload = async () => {
-      try {
-        const base64 = reader.result.split(',')[1];
-        const body = {
-          message: `📄 PDF追加: ${slug}`,
-          content: base64,
-        };
-
-        const result = await githubApi(
-          `/repos/${s.username}/${s.repo}/contents/pdfs/${slug}.pdf`,
-          { method: 'PUT', body: JSON.stringify(body) }
-        );
-        resolve(result);
-      } catch (e) {
-        reject(e);
-      }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      // Remove the data URL prefix
+      const base64 = result.split(',')[1];
+      resolve(base64);
     };
-    reader.onerror = () => reject(new Error('ファイルの読み込みに失敗しました'));
+    reader.onerror = reject;
     reader.readAsDataURL(file);
   });
 }
 
-// Delete entry from database
-async function deleteEntry(slug) {
-  if (!confirm(`"${slug}" を削除しますか？\n（PDFファイルは手動で削除してください）`)) return;
-
-  try {
-    const { content, sha } = await fetchDatabase();
-    if (content[slug]) {
-      delete content[slug];
-      await updateDatabase(content, sha);
-      showStatus(`"${slug}" を削除しました`, 'success');
-      loadHistory();
-    }
-  } catch (e) {
-    showStatus(`削除エラー: ${e.message}`, 'error');
-  }
+// ===== Generate PDF Viewer HTML =====
+function generatePdfViewerHtml(pdfFileName, title) {
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>${title}</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;font-family:sans-serif;display:flex;flex-direction:column;height:100vh}
+.toolbar{background:#16213e;padding:8px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.toolbar .title{color:#e8e8f0;font-size:14px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toolbar button{background:rgba(255,255,255,0.1);border:none;color:#e8e8f0;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;transition:0.2s}
+.toolbar button:hover{background:rgba(255,255,255,0.2)}
+.toolbar .page-info{color:#8888aa;font-size:13px}
+.viewer{flex:1;overflow:auto;display:flex;flex-direction:column;align-items:center;padding:16px;gap:12px}
+canvas{max-width:100%;box-shadow:0 4px 20px rgba(0,0,0,0.4);border-radius:4px}
+.loading{color:#8888aa;font-size:14px;padding:40px}
+</style>
+</head>
+<body>
+<div class="toolbar">
+<span class="title">${title}</span>
+<button id="prevBtn" onclick="changePage(-1)">◀</button>
+<span class="page-info" id="pageInfo">-</span>
+<button id="nextBtn" onclick="changePage(1)">▶</button>
+<button onclick="zoomChange(-0.2)">ー</button>
+<button onclick="zoomChange(0.2)">＋</button>
+<button onclick="location.href='./${pdfFileName}'">DL</button>
+</div>
+<div class="viewer" id="viewer"><div class="loading">読み込み中...</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"><\/script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let pdfDoc=null,currentPage=1,scale=1.2;
+async function loadPdf(){
+try{
+pdfDoc=await pdfjsLib.getDocument('./${pdfFileName}').promise;
+document.getElementById('pageInfo').textContent=currentPage+'/'+pdfDoc.numPages;
+renderAllPages();
+}catch(e){document.getElementById('viewer').innerHTML='<div class="loading">PDF読み込みエラー</div>';}
+}
+async function renderAllPages(){
+const v=document.getElementById('viewer');v.innerHTML='';
+for(let i=1;i<=pdfDoc.numPages;i++){
+const p=await pdfDoc.getPage(i);
+const vp=p.getViewport({scale:scale});
+const c=document.createElement('canvas');
+c.width=vp.width;c.height=vp.height;
+v.appendChild(c);
+await p.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+}
+}
+function changePage(d){
+if(!pdfDoc)return;
+currentPage=Math.max(1,Math.min(pdfDoc.numPages,currentPage+d));
+document.getElementById('pageInfo').textContent=currentPage+'/'+pdfDoc.numPages;
+const canvases=document.querySelectorAll('#viewer canvas');
+if(canvases[currentPage-1])canvases[currentPage-1].scrollIntoView({behavior:'smooth',block:'start'});
+}
+function zoomChange(d){scale=Math.max(0.4,Math.min(3,scale+d));if(pdfDoc)renderAllPages();}
+loadPdf();
+<\/script>
+</body>
+</html>`;
 }
 
-// === Main Submit Handler ===
-async function handleSubmit() {
-  if (state.isLoading) return;
+// ===== Generate Redirect HTML =====
+function generateRedirectHtml(targetUrl, slug) {
+  return `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="0;url=${targetUrl}">
+<title>リダイレクト中...</title>
+<style>
+body{background:#1a1a2e;color:#e8e8f0;font-family:sans-serif;display:flex;align-items:center;justify-content:center;height:100vh;margin:0}
+a{color:#a855f7}
+</style>
+</head>
+<body>
+<p>リダイレクト中... <a href="${targetUrl}">こちらをクリック</a></p>
+<script>window.location.href="${targetUrl}";<\/script>
+</body>
+</html>`;
+}
 
-  clearStatus();
-
-  // Validate settings
-  const s = getSettings();
-  const hasAuth = s.token && s.username && s.repo;
-
-  // Validate input
-  if (state.mode === 'url') {
-    const url = document.getElementById('target-url').value.trim();
-    if (!url) {
-      showStatus('URLを入力してください。', 'error');
-      return;
-    }
-    try {
-      new URL(url);
-    } catch {
-      showStatus('有効なURLを入力してください。', 'error');
-      return;
-    }
-
-    // トークンがない場合の「手動モード」
-    if (!hasAuth) {
-      // Get slug
-      let slug = document.getElementById('custom-slug').value.trim();
-      if (!slug) {
-        generateRandomSlug();
-        slug = document.getElementById('custom-slug').value;
-      }
-
-      const jsonEntry = `"${slug}": {\n  "target": "${url}",\n  "type": "url",\n  "created": "${new Date().toISOString()}"\n},`;
-
-      const manualMsg = `トークン未設定のため自動保存できません。\n以下のデータを database.json に手動で追記してください：\n\n${jsonEntry}`;
-
-      // クリップボードにコピー
-      navigator.clipboard.writeText(jsonEntry).then(() => {
-        alert(manualMsg + "\n\n(クリップボードにコピーしました)");
-      }).catch(() => {
-        alert(manualMsg);
-      });
-      return;
-    }
-
-  } else {
-    // PDFモード
-    if (!state.selectedFile) {
-      showStatus('PDFファイルを選択してください。', 'error');
-      return;
-    }
-    if (!hasAuth) {
-      alert('PDFアップロードにはトークン設定が必須です。設定画面からトークンを入力してください。');
-      openSettingsModal();
-      return;
-    }
-  }
-
-  // Get or generate slug
-  let slug = document.getElementById('custom-slug').value.trim();
+// ===== PDF Submit =====
+$('#pdfSubmit').addEventListener('click', async () => {
+  const slug = $('#pdfSlug').value.trim().replace(/[^a-zA-Z0-9_-]/g, '');
   if (!slug) {
-    generateRandomSlug();
-    slug = document.getElementById('custom-slug').value;
+    showToast('カスタムIDには英数字・ハイフン・アンダースコアのみ使えます', 'error');
+    return;
   }
+  if (!selectedFile) return;
 
-  // Start loading
-  setLoading(true);
+  const settings = getSettings();
+  const btn = $('#pdfSubmit');
+  const progress = $('#pdfProgress');
+  const progressFill = $('#pdfProgressFill');
+  const progressText = $('#pdfProgressText');
+
+  btn.disabled = true;
+  progress.classList.add('show');
 
   try {
-    // Fetch current database
-    showStatus('データベースを読み込み中...', 'info');
-    const { content: db, sha } = await fetchDatabase();
+    // Step 1: Convert file to base64
+    progressText.textContent = 'PDFを準備中...';
+    progressFill.style.width = '20%';
+    const base64Content = await fileToBase64(selectedFile);
 
-    // Check for duplicate slug
-    if (db[slug]) {
-      showStatus(`"${slug}" は既に使用されています。別のIDを指定してください。`, 'error');
-      setLoading(false);
-      return;
-    }
+    // Step 2: Upload PDF
+    progressText.textContent = 'PDFをGitHubにアップロード中...';
+    progressFill.style.width = '40%';
+    const pdfFileName = `file.pdf`;
+    await githubRequest(`${slug}/${pdfFileName}`, 'PUT', {
+      message: `PDF追加: ${slug}`,
+      content: base64Content
+    });
 
-    let targetUrl;
+    // Step 3: Generate and upload viewer HTML
+    progressText.textContent = 'ビューアHTMLを作成・送信中...';
+    progressFill.style.width = '70%';
+    const viewerHtml = generatePdfViewerHtml(pdfFileName, selectedFile.name.replace('.pdf', ''));
+    const viewerBase64 = btoa(unescape(encodeURIComponent(viewerHtml)));
+    await githubRequest(`${slug}/index.html`, 'PUT', {
+      message: `ビューア追加: ${slug}`,
+      content: viewerBase64
+    });
 
-    if (state.mode === 'pdf') {
-      // Upload PDF
-      showStatus('PDFをアップロード中...', 'info');
-      await uploadPdf(state.selectedFile, slug);
-      targetUrl = `https://raw.githubusercontent.com/${s.username}/${s.repo}/main/pdfs/${slug}.pdf`;
-    } else {
-      targetUrl = document.getElementById('target-url').value.trim();
-    }
+    // Step 4: Done
+    progressFill.style.width = '100%';
+    progressText.textContent = '完了！';
 
-    // Update database
-    showStatus('データベースを更新中...', 'info');
-    db[slug] = {
-      target: targetUrl,
-      type: state.mode,
-      created: new Date().toISOString(),
-    };
-    await updateDatabase(db, sha);
+    const publicUrl = `https://${settings.username}.github.io/${settings.repo}/${slug}/`;
+    $('#pdfResultUrl').value = publicUrl;
+    $('#pdfResult').classList.add('show');
 
-    // Show result
-    const shortUrl = `${getBaseUrl()}/${slug}`;
-    document.getElementById('result-url').textContent = shortUrl;
-    document.getElementById('result-panel').classList.add('visible');
-    document.getElementById('copy-btn').classList.remove('copied');
-    document.getElementById('copy-btn').innerHTML = '📋 コピー';
+    addToHistory('pdf', slug, publicUrl);
+    showToast('オリジナルURLを作成しました！', 'success');
 
-    showStatus('オリジナルURLが正常に作成されました！', 'success');
-
-    // Refresh history
-    loadHistory();
-
-    // Reset form
-    if (state.mode === 'url') {
-      document.getElementById('target-url').value = '';
-    } else {
-      removeFile();
-    }
-    document.getElementById('custom-slug').value = '';
-
-  } catch (e) {
-    showStatus(`エラー: ${e.message}`, 'error');
+  } catch (err) {
+    showToast(`エラー: ${err.message}`, 'error');
   } finally {
-    setLoading(false);
-  }
-}
-
-function setLoading(loading) {
-  state.isLoading = loading;
-  const btn = document.getElementById('submit-btn');
-  btn.classList.toggle('loading', loading);
-  btn.disabled = loading;
-}
-
-// === Copy Result ===
-async function copyResult() {
-  const url = document.getElementById('result-url').textContent;
-  try {
-    await navigator.clipboard.writeText(url);
-    const btn = document.getElementById('copy-btn');
-    btn.classList.add('copied');
-    btn.innerHTML = '✅ コピー済み';
     setTimeout(() => {
-      btn.classList.remove('copied');
-      btn.innerHTML = '📋 コピー';
-    }, 2000);
-  } catch {
-    // Fallback
-    const textarea = document.createElement('textarea');
-    textarea.value = url;
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand('copy');
-    document.body.removeChild(textarea);
+      progress.classList.remove('show');
+      progressFill.style.width = '0%';
+      btn.disabled = false;
+      validatePdfForm();
+    }, 1500);
   }
-}
+});
 
-// === History ===
-async function loadHistory() {
-  const s = getSettings();
-  if (!s.token || !s.username || !s.repo) {
+// ===== URL Submit =====
+$('#urlSubmit').addEventListener('click', async () => {
+  const slug = $('#urlSlug').value.trim().replace(/[^a-zA-Z0-9_-]/g, '');
+  if (!slug) {
+    showToast('カスタムIDには英数字・ハイフン・アンダースコアのみ使えます', 'error');
     return;
   }
+  const targetUrl = $('#targetUrl').value.trim();
+  if (!targetUrl) return;
+
+  const settings = getSettings();
+  const btn = $('#urlSubmit');
+  const progress = $('#urlProgress');
+  const progressFill = $('#urlProgressFill');
+  const progressText = $('#urlProgressText');
+
+  btn.disabled = true;
+  progress.classList.add('show');
 
   try {
-    const { content: db } = await fetchDatabase();
-    renderHistory(db);
-  } catch {
-    // Silently fail
-  }
-}
+    // Step 1: Generate redirect HTML
+    progressText.textContent = 'リダイレクト設定を作成中...';
+    progressFill.style.width = '30%';
+    const redirectHtml = generateRedirectHtml(targetUrl, slug);
+    const base64 = btoa(unescape(encodeURIComponent(redirectHtml)));
 
-function renderHistory(db) {
-  const list = document.getElementById('history-list');
-  const entries = Object.entries(db).sort((a, b) => {
-    return new Date(b[1].created) - new Date(a[1].created);
+    // Step 2: Upload
+    progressText.textContent = 'GitHubに保存中...';
+    progressFill.style.width = '60%';
+    await githubRequest(`${slug}/index.html`, 'PUT', {
+      message: `URL追加: ${slug} → ${targetUrl}`,
+      content: base64
+    });
+
+    // Step 3: Done
+    progressFill.style.width = '100%';
+    progressText.textContent = '完了！';
+
+    const publicUrl = `https://${settings.username}.github.io/${settings.repo}/${slug}/`;
+    $('#urlResultUrl').value = publicUrl;
+    $('#urlResult').classList.add('show');
+
+    addToHistory('url', slug, publicUrl);
+    showToast('オリジナルURLを作成しました！', 'success');
+
+  } catch (err) {
+    showToast(`エラー: ${err.message}`, 'error');
+  } finally {
+    setTimeout(() => {
+      progress.classList.remove('show');
+      progressFill.style.width = '0%';
+      btn.disabled = false;
+      validateUrlForm();
+    }, 1500);
+  }
+});
+
+// ===== Copy Buttons =====
+$('#pdfCopyBtn').addEventListener('click', () => {
+  navigator.clipboard.writeText($('#pdfResultUrl').value);
+  showToast('URLをコピーしました', 'success');
+});
+
+$('#urlCopyBtn').addEventListener('click', () => {
+  navigator.clipboard.writeText($('#urlResultUrl').value);
+  showToast('URLをコピーしました', 'success');
+});
+
+// ===== History =====
+function addToHistory(type, slug, url) {
+  history.unshift({
+    type,
+    slug,
+    url,
+    date: new Date().toLocaleDateString('ja-JP')
   });
+  if (history.length > 50) history.pop();
+  localStorage.setItem('urlconv_history', JSON.stringify(history));
+  renderHistory();
+}
 
-  if (entries.length === 0) {
-    list.innerHTML = '<div class="history-empty">まだ作成した短縮URLはありません</div>';
+function renderHistory() {
+  const list = $('#historyList');
+  if (history.length === 0) {
+    list.innerHTML = '<div class="history-empty">まだ履歴はありません</div>';
+    return;
+  }
+  list.innerHTML = history.map(item => `
+    <div class="history-item">
+      <span class="type-badge ${item.type}">${item.type === 'pdf' ? 'PDF' : 'URL'}</span>
+      <span class="history-slug">${item.slug}</span>
+      <span class="history-date">${item.date}</span>
+      <button class="history-copy" onclick="copyHistoryUrl('${item.url}')" title="URLをコピー">📋</button>
+    </div>
+  `).join('');
+}
+
+window.copyHistoryUrl = function (url) {
+  navigator.clipboard.writeText(url);
+  showToast('URLをコピーしました', 'success');
+};
+
+// ===== Settings Modal =====
+$('#settingsBtn').addEventListener('click', () => {
+  const settings = getSettings();
+  $('#ghUsername').value = settings.username;
+  $('#ghRepo').value = settings.repo;
+  $('#ghToken').value = settings.token;
+  $('#connectionStatus').innerHTML = '';
+  $('#settingsModal').classList.add('show');
+});
+
+$('#modalClose').addEventListener('click', () => {
+  $('#settingsModal').classList.remove('show');
+});
+
+$('#settingsModal').addEventListener('click', (e) => {
+  if (e.target === $('#settingsModal')) {
+    $('#settingsModal').classList.remove('show');
+  }
+});
+
+$('#saveSettings').addEventListener('click', () => {
+  const username = $('#ghUsername').value.trim();
+  const repo = $('#ghRepo').value.trim();
+  const token = $('#ghToken').value.trim();
+
+  if (!username || !repo || !token) {
+    showToast('全ての項目を入力してください', 'error');
     return;
   }
 
-  const baseUrl = getBaseUrl();
+  saveSettingsToStorage(username, repo, token);
+  showToast('設定を保存しました', 'success');
+  $('#settingsModal').classList.remove('show');
 
-  list.innerHTML = entries.map(([slug, data]) => {
-    const date = new Date(data.created);
-    const dateStr = `${date.getFullYear()}/${String(date.getMonth() + 1).padStart(2, '0')}/${String(date.getDate()).padStart(2, '0')}`;
-    const typeBadge = data.type === 'pdf'
-      ? '<span class="history-type-badge pdf">PDF</span>'
-      : '<span class="history-type-badge url">URL</span>';
+  // Re-validate forms
+  validatePdfForm();
+  validateUrlForm();
+});
 
-    return `
-      <div class="history-item">
-        ${typeBadge}
-        <span class="history-slug" title="${baseUrl}/${slug}">${slug}</span>
-        <span class="history-date">${dateStr}</span>
-        <button class="history-copy-btn" onclick="copyHistoryUrl('${slug}')" title="URLをコピー">📋</button>
-        <button class="history-delete-btn" onclick="deleteEntry('${slug}')" title="削除">🗑️</button>
-      </div>
-    `;
-  }).join('');
-}
+$('#testConnection').addEventListener('click', async () => {
+  const username = $('#ghUsername').value.trim();
+  const repo = $('#ghRepo').value.trim();
+  const token = $('#ghToken').value.trim();
 
-async function copyHistoryUrl(slug) {
-  const url = `${getBaseUrl()}/${slug}`;
-  try {
-    await navigator.clipboard.writeText(url);
-    showStatus(`コピーしました: ${url}`, 'success');
-  } catch {
-    showStatus('コピーに失敗しました', 'error');
+  if (!username || !repo || !token) {
+    showToast('全ての項目を入力してください', 'error');
+    return;
   }
+
+  const statusEl = $('#connectionStatus');
+  statusEl.innerHTML = '<div class="status-badge checking">⏳ 接続確認中...</div>';
+
+  try {
+    const res = await fetch(`https://api.github.com/repos/${username}/${repo}`, {
+      headers: {
+        'Authorization': `token ${token}`,
+        'Accept': 'application/vnd.github.v3+json'
+      }
+    });
+
+    if (res.ok) {
+      const data = await res.json();
+      if (data.permissions && data.permissions.push) {
+        statusEl.innerHTML = '<div class="status-badge connected">✅ 接続OK（書き込み権限あり）</div>';
+      } else {
+        statusEl.innerHTML = '<div class="status-badge disconnected">⚠️ 読み取り専用。repoスコープのトークンが必要です</div>';
+      }
+    } else if (res.status === 404) {
+      statusEl.innerHTML = '<div class="status-badge disconnected">❌ リポジトリが見つかりません</div>';
+    } else if (res.status === 401) {
+      statusEl.innerHTML = '<div class="status-badge disconnected">❌ トークンが無効です</div>';
+    } else {
+      statusEl.innerHTML = `<div class="status-badge disconnected">❌ エラー (${res.status})</div>`;
+    }
+  } catch (err) {
+    statusEl.innerHTML = '<div class="status-badge disconnected">❌ 接続できません</div>';
+  }
+});
+
+// ===== Init =====
+function init() {
+  renderHistory();
+
+  // If not configured, open settings modal
+  if (!isConfigured()) {
+    setTimeout(() => {
+      $('#settingsModal').classList.add('show');
+      showToast('まずGitHub設定を行ってください', 'info');
+    }, 500);
+  }
+
+  validatePdfForm();
+  validateUrlForm();
 }
+
+init();

@@ -4,200 +4,152 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="GitHub内で完結するオリジナルURL作成ツール。PDF保存・URLリダイレクト対応。">
-  <title>🔗 オリジナルURL作成</title>
-  <link rel="stylesheet" href="style.css">
-  <link rel="icon"
-    href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔗</text></svg>">
+  <title>URL Converter - PDF & URL変換ツール</title>
+  <meta name="description" content="PDFをURLに変換、特定のURLをオリジナルURLに変換するツール">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
-
-  <!-- Animated Background -->
-  <div class="bg-animation">
-    <div class="bg-orb"></div>
-    <div class="bg-orb"></div>
-    <div class="bg-orb"></div>
-  </div>
-
   <div class="app-container">
-
     <!-- Header -->
     <header class="app-header">
-      <div class="app-logo">
-        <div class="app-logo-icon">🔗</div>
-        <h1 class="app-title">オリジナルURL作成</h1>
-        <button class="settings-gear-btn" onclick="openSettingsModal()" title="GitHub設定">⚙️</button>
-      </div>
-      <p class="app-subtitle">GitHub内で完結するオリジナルURLツール</p>
+      <h1>URL Converter</h1>
+      <p>PDF・URLをオリジナルURLに変換</p>
+      <button class="settings-btn" id="settingsBtn" title="設定">⚙</button>
     </header>
 
-    <!-- Main Card -->
-    <div class="card">
-      <div class="card-title" style="margin-bottom: 16px;">
-        <span class="card-title-icon">✨</span>
-        オリジナルURL作成
-      </div>
+    <!-- Tabs -->
+    <div class="tab-container">
+      <button class="tab-btn active" data-tab="pdf">📄 pdf ⇒ オリジナルURL</button>
+      <button class="tab-btn" data-tab="url">🔗 URL ⇒ オリジナルURL</button>
+    </div>
 
-      <!-- Mode Toggle -->
-      <div class="mode-toggle">
-        <button class="mode-btn active" id="mode-url" onclick="setMode('url')">
-          <span class="mode-icon">🔗</span>
-          URL作成
-        </button>
-        <button class="mode-btn" id="mode-pdf" onclick="setMode('pdf')">
-          <span class="mode-icon">📄</span>
-          PDFアップロード
-        </button>
-      </div>
-
-      <!-- URL Input (visible by default) -->
-      <div id="url-section">
+    <!-- PDF Tab -->
+    <div class="tab-panel active" id="tab-pdf">
+      <div class="card">
         <div class="form-group">
-          <label class="form-label">リダイレクト先URL</label>
-          <div class="url-input-group">
-            <input type="url" class="form-input" id="target-url" placeholder="https://example.com/very-long-url-here">
-            <button class="url-clear-btn" onclick="clearUrlInput()" title="クリア">✕</button>
-          </div>
+          <label>カスタムID（URLの末尾になります）</label>
+          <input type="text" id="pdfSlug" placeholder="例: myreport-2024">
         </div>
-      </div>
 
-      <!-- PDF Upload (hidden by default) -->
-      <div id="pdf-section" style="display: none;">
-        <div class="form-group">
-          <label class="form-label">PDFファイル</label>
-          <div class="file-drop-zone" id="drop-zone" onclick="document.getElementById('file-input').click()">
-            <span class="drop-icon">📄</span>
-            <div class="drop-label">ここにPDFをドロップ、またはクリックして選択</div>
-            <div class="drop-hint">最大25MB</div>
+        <div class="drop-zone" id="dropZone">
+          <span class="drop-zone-icon">📁</span>
+          <p class="drop-zone-text">
+            PDFをここにドラッグ＆ドロップ<br>
+            または<strong>クリックして選択</strong>
+          </p>
+          <input type="file" id="fileInput" accept=".pdf" style="display:none">
+        </div>
+
+        <div class="file-info" id="fileInfo">
+          <span class="file-icon">📄</span>
+          <span class="file-name" id="fileName"></span>
+          <span class="file-size" id="fileSize"></span>
+          <button class="remove-file" id="removeFile" title="削除">✕</button>
+        </div>
+
+        <div class="progress-container" id="pdfProgress">
+          <div class="progress-bar">
+            <div class="progress-fill" id="pdfProgressFill"></div>
           </div>
-          <div class="file-drop-zone has-file" id="file-info-zone" style="display: none;">
-            <div class="file-info">
-              <span>📄</span>
-              <span class="file-name" id="file-name"></span>
-              <span class="file-size" id="file-size"></span>
-              <button class="file-remove-btn" onclick="removeFile()" title="削除">✕</button>
+          <p class="progress-text" id="pdfProgressText">準備中...</p>
+        </div>
+
+        <button class="btn-primary" id="pdfSubmit" disabled>🚀 オリジナルURLを作成</button>
+
+        <div class="result-container" id="pdfResult">
+          <div class="result-box">
+            <h3>✅ URL生成完了</h3>
+            <div class="result-url">
+              <input type="text" id="pdfResultUrl" readonly>
+              <button class="copy-btn" id="pdfCopyBtn">コピー</button>
             </div>
           </div>
-          <input type="file" class="file-input-hidden" id="file-input" accept=".pdf">
-        </div>
-      </div>
-
-      <!-- Custom Slug -->
-      <div class="form-group" style="margin-top: 16px;">
-        <label class="form-label">
-          カスタムID
-          <span class="badge">任意</span>
-        </label>
-        <div class="slug-input-wrapper">
-          <span class="slug-prefix" id="slug-prefix">domain.com/</span>
-          <input type="text" class="slug-input" id="custom-slug" placeholder="my-event-2026（空欄で自動生成）"
-            pattern="[a-zA-Z0-9_-]+" oninput="validateSlug(this)">
-          <button class="slug-generate-btn" onclick="generateRandomSlug()" title="ランダム生成">🎲</button>
-        </div>
-        <span class="form-hint" id="slug-hint">英数字・ハイフン・アンダースコアが使用できます。</span>
-      </div>
-
-      <!-- Submit Button -->
-      <button class="submit-btn" id="submit-btn" onclick="handleSubmit()" style="margin-top: 20px;">
-        <div class="spinner"></div>
-        <span class="btn-text">🚀 オリジナルURLを生成</span>
-      </button>
-
-      <!-- Status Message -->
-      <div class="status-message" id="status-message">
-        <span id="status-icon"></span>
-        <span id="status-text"></span>
-      </div>
-    </div>
-
-    <!-- Result Panel -->
-    <div class="result-panel" id="result-panel">
-      <div class="card result-card">
-        <div class="result-success-icon">✅</div>
-        <div class="result-label">オリジナルURLが生成されました</div>
-        <div class="result-url-box">
-          <span class="result-url" id="result-url"></span>
-          <button class="copy-btn" id="copy-btn" onclick="copyResult()">
-            📋 コピー
-          </button>
         </div>
       </div>
     </div>
 
-    <!-- History Card -->
-    <div class="card" id="history-card">
-      <div class="card-header" onclick="toggleCard('history')">
-        <div class="card-title">
-          <span class="card-title-icon">📋</span>
-          作成履歴
+    <!-- URL Tab -->
+    <div class="tab-panel" id="tab-url">
+      <div class="card">
+        <div class="form-group">
+          <label>カスタムID（URLの末尾になります）</label>
+          <input type="text" id="urlSlug" placeholder="例: my-link">
         </div>
-        <button class="card-toggle" id="history-toggle">▼</button>
-      </div>
-      <div class="card-body" id="history-body">
-        <div class="history-list" id="history-list">
-          <div class="history-empty" id="history-empty">まだ作成したURLはありません</div>
+
+        <div class="form-group">
+          <label>変換先URL（リダイレクト先）</label>
+          <input type="url" id="targetUrl" placeholder="https://example.com/long-url">
+        </div>
+
+        <div class="progress-container" id="urlProgress">
+          <div class="progress-bar">
+            <div class="progress-fill" id="urlProgressFill"></div>
+          </div>
+          <p class="progress-text" id="urlProgressText">準備中...</p>
+        </div>
+
+        <button class="btn-primary" id="urlSubmit" disabled>🚀 オリジナルURLを作成</button>
+
+        <div class="result-container" id="urlResult">
+          <div class="result-box">
+            <h3>✅ URL生成完了</h3>
+            <div class="result-url">
+              <input type="text" id="urlResultUrl" readonly>
+              <button class="copy-btn" id="urlCopyBtn">コピー</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Footer -->
-    <footer class="app-footer">
-      <p>Powered by <a href="https://pages.github.com" target="_blank">GitHub Pages</a> &amp; <a
-          href="https://docs.github.com/en/rest" target="_blank">GitHub API</a></p>
-    </footer>
-
+    <!-- History -->
+    <div class="history-section" id="historySection">
+      <h3>📋 生成履歴</h3>
+      <div class="history-list" id="historyList">
+        <div class="history-empty">まだ履歴はありません</div>
+      </div>
+    </div>
   </div>
 
-  <!-- Settings Modal (普段は非表示) -->
-  <div class="modal-overlay" id="settings-modal" onclick="closeSettingsModal(event)">
-    <div class="modal-content" onclick="event.stopPropagation()">
+  <!-- Settings Modal -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal">
       <div class="modal-header">
-        <h3 class="modal-title">⚙️ GitHub設定</h3>
-        <button class="modal-close-btn" onclick="closeSettingsModal()">✕</button>
+        <h2>⚙ GitHub設定</h2>
+        <button class="modal-close" id="modalClose">✕</button>
       </div>
-      <div class="modal-body">
-        <div class="settings-grid">
-          <div class="form-group">
-            <label class="form-label">
-              Personal Access Token
-              <span class="badge">必須</span>
-            </label>
-            <div class="token-input-group">
-              <input type="password" class="form-input mono" id="github-token" placeholder="ghp_xxxxxxxxxxxxxxxxxxxx"
-                autocomplete="off">
-              <button class="token-toggle-btn" id="token-toggle" onclick="toggleTokenVisibility()"
-                title="表示/非表示">👁️</button>
-            </div>
-            <span class="form-hint">repo権限が必要です。このブラウザに安全に保存されます。</span>
-          </div>
-          <div class="settings-row">
-            <div class="form-group">
-              <label class="form-label">GitHubユーザー名</label>
-              <input type="text" class="form-input" id="github-username" placeholder="username">
-            </div>
-            <div class="form-group">
-              <label class="form-label">リポジトリ名</label>
-              <input type="text" class="form-input" id="github-repo" placeholder="url-shortener">
-            </div>
-          </div>
-          <div class="form-group">
-            <label class="form-label">カスタムドメイン <span class="badge">任意</span></label>
-            <input type="text" class="form-input" id="custom-domain"
-              placeholder="例: s.example.com（空欄の場合 username.github.io/repo を使用）">
-            <span class="form-hint">GitHub Pagesにカスタムドメインを設定済みの場合に入力。</span>
-          </div>
-        </div>
+
+      <div class="form-group">
+        <label>GitHubユーザー名</label>
+        <input type="text" id="ghUsername" placeholder="例: your-username">
       </div>
+
+      <div class="form-group">
+        <label>リポジトリ名</label>
+        <input type="text" id="ghRepo" placeholder="例: my-urls">
+      </div>
+
+      <div class="form-group">
+        <label>パーソナルアクセストークン</label>
+        <input type="password" id="ghToken" placeholder="ghp_xxxxxxxxxxxx">
+      </div>
+
+      <div id="connectionStatus"></div>
+
       <div class="modal-footer">
-        <span class="connection-status" id="connection-status">
-          <span class="connection-dot"></span>
-          <span id="connection-text">未接続</span>
-        </span>
-        <button class="modal-save-btn" onclick="saveAndClose()">✅ 保存して閉じる</button>
+        <button class="btn-test" id="testConnection">接続テスト</button>
+        <button class="btn-save" id="saveSettings">保存</button>
       </div>
     </div>
   </div>
+
+  <!-- Toast Container -->
+  <div class="toast-container" id="toastContainer"></div>
 
   <script src="app.js"></script>
 </body>
