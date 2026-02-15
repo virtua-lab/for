@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>popon_info</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1a2e;font-family:sans-serif;display:flex;flex-direction:column;height:100vh}
+.toolbar{background:#16213e;padding:8px 16px;display:flex;align-items:center;gap:12px;flex-shrink:0}
+.toolbar .title{color:#e8e8f0;font-size:14px;font-weight:600;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.toolbar button{background:rgba(255,255,255,0.1);border:none;color:#e8e8f0;padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px;transition:0.2s}
+.toolbar button:hover{background:rgba(255,255,255,0.2)}
+.toolbar .page-info{color:#8888aa;font-size:13px}
+.viewer{flex:1;overflow:auto;display:flex;flex-direction:column;align-items:center;padding:16px;gap:12px}
+canvas{max-width:100%;box-shadow:0 4px 20px rgba(0,0,0,0.4);border-radius:4px}
+.loading{color:#8888aa;font-size:14px;padding:40px}
+</style>
+</head>
+<body>
+<div class="toolbar">
+<span class="title">popon_info</span>
+<button id="prevBtn" onclick="changePage(-1)">◀</button>
+<span class="page-info" id="pageInfo">-</span>
+<button id="nextBtn" onclick="changePage(1)">▶</button>
+<button onclick="zoomChange(-0.2)">ー</button>
+<button onclick="zoomChange(0.2)">＋</button>
+</div>
+<div class="viewer" id="viewer"><div class="loading">読み込み中...</div></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+let pdfDoc=null,currentPage=1,scale=1.2;
+async function loadPdf(){
+try{
+pdfDoc=await pdfjsLib.getDocument('./file.pdf').promise;
+document.getElementById('pageInfo').textContent=currentPage+'/'+pdfDoc.numPages;
+renderAllPages();
+}catch(e){document.getElementById('viewer').innerHTML='<div class="loading">PDF読み込みエラー</div>';}
+}
+async function renderAllPages(){
+const v=document.getElementById('viewer');v.innerHTML='';
+for(let i=1;i<=pdfDoc.numPages;i++){
+const p=await pdfDoc.getPage(i);
+const vp=p.getViewport({scale:scale});
+const c=document.createElement('canvas');
+c.width=vp.width;c.height=vp.height;
+v.appendChild(c);
+await p.render({canvasContext:c.getContext('2d'),viewport:vp}).promise;
+}
+}
+function changePage(d){
+if(!pdfDoc)return;
+currentPage=Math.max(1,Math.min(pdfDoc.numPages,currentPage+d));
+document.getElementById('pageInfo').textContent=currentPage+'/'+pdfDoc.numPages;
+const canvases=document.querySelectorAll('#viewer canvas');
+if(canvases[currentPage-1])canvases[currentPage-1].scrollIntoView({behavior:'smooth',block:'start'});
+}
+function zoomChange(d){scale=Math.max(0.4,Math.min(3,scale+d));if(pdfDoc)renderAllPages();}
+loadPdf();
+</script>
+</body>
+</html>
